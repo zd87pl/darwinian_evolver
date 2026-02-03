@@ -15,6 +15,8 @@ from typing import Any
 
 import numpy as np
 
+USE_SLASH_DIFF = True
+
 
 def build_prompt(base_prompt: str, **fields: str) -> str:
     s = base_prompt
@@ -98,7 +100,16 @@ def format_problem(problem: dict[str, Any], should_highlight_diff: bool = False)
 
             if inp_arr.shape == out_arr.shape:
                 # Same shape - highlight diffs
-                example_str += f"""
+                if USE_SLASH_DIFF:
+                    example_str += f"""
+### Input/Output Comparison:
+For cells that are different between input and output, the format is 'input/output'. Cells that are the same are shown as-is.
+```
+{_array_diff(inp_arr, out_arr)}
+```
+"""
+                else:
+                    example_str += f"""
 ### Output (differences from input only):
 ```
 {example_to_diff_diagram(inp_arr, out_arr)}
