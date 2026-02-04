@@ -11,12 +11,19 @@ from darwinian_evolver.cli_common import parse_learning_log_view_type
 from darwinian_evolver.evolve_problem_loop import EvolveProblemLoop
 from darwinian_evolver.population import Population
 from darwinian_evolver.problems.arc_agi import ArcAgiEvaluationFailureCase
+from darwinian_evolver.problems.arc_agi import USE_PROVIDER
 from darwinian_evolver.problems.arc_agi import get_current_cost
 from darwinian_evolver.problems.arc_agi import make_arc_agi_problem
 from darwinian_evolver.problems.arc_agi_poetiq import build_kaggle_two_attempts
 from darwinian_evolver.problems.arc_agi_poetiq import coerce_grid
 from darwinian_evolver.problems.arc_agi_poetiq import grids_equal
 from darwinian_evolver.problems.arc_agi_poetiq import score_task
+
+if USE_PROVIDER == "openai":
+    # GPT 5.2 tends to assign lower transfer scores than Gemini 3.
+    SUFFICIENT_TRANSFER_SCORE = 0.7
+else:
+    SUFFICIENT_TRANSFER_SCORE = 0.9
 
 
 def _eval_task_data(
@@ -87,7 +94,9 @@ def _eval_task_data(
         # In the latter case, we iterate up to extra_iterations_after_solution more times to see if we can find an even better solution.
         has_full_solution = (
             sum(
-                1 if (eval_result.correctness_score > 0.999 and eval_result.transfer_score >= 0.9) else 0
+                1
+                if (eval_result.correctness_score > 0.999 and eval_result.transfer_score >= SUFFICIENT_TRANSFER_SCORE)
+                else 0
                 for _, eval_result in evolve_loop.population.organisms
             )
             >= 2

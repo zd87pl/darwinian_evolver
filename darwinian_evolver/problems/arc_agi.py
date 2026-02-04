@@ -20,6 +20,7 @@ from openai.types.responses import ResponseUsage
 from pydantic import computed_field
 from tenacity import retry
 from tenacity import stop_after_attempt
+from tenacity import wait_random_exponential
 
 from darwinian_evolver.learning_log import LearningLogEntry
 from darwinian_evolver.problem import EvaluationFailureCase
@@ -170,7 +171,7 @@ def _track_anthropic_costs(model: str, usage: AnthropicUsage) -> None:
     _track_cost(cost)
 
 
-@retry(stop=stop_after_attempt(2), reraise=True)
+@retry(stop=stop_after_attempt(4), wait=wait_random_exponential(multiplier=10), reraise=True)
 def _prompt_llm_anthropic(prompt: str, thinking_level: ThinkingLevel) -> str:
     client = Anthropic()
     response = client.messages.create(
@@ -212,8 +213,8 @@ def _track_google_costs(model: str, usage: genai.types.UsageMetadata) -> None:
 @retry(stop=stop_after_attempt(4), reraise=True)
 def _prompt_llm_google(prompt: str, thinking_level: ThinkingLevel, use_alt_model: bool = False) -> str:
     client = genai.Client(
-        api_key=os.environ["GOOGLE_API_KEY"],
-        vertexai=True
+        api_key=os.getenv("GOOGLE_API_KEY"),
+        vertexai=os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "False").lower() == "true",
     )
 
     if use_alt_model:
@@ -258,24 +259,36 @@ def _track_openai_costs(model: str, usage: ResponseUsage) -> None:
     _track_cost(cost)
 
 
-@retry(stop=stop_after_attempt(2), reraise=True)
+@retry(stop=stop_after_attempt(4), wait=wait_random_exponential(multiplier=10), reraise=True)
 def _prompt_llm_openai(prompt: str, thinking_level: ThinkingLevel) -> str:
     client = OpenAI()
 
     if thinking_level == ThinkingLevel.HIGH:
-        reasoning_effort = "high"
+        reasoning_effort = "xhigh"
     elif thinking_level == ThinkingLevel.MEDIUM:
         reasoning_effort = "medium"
     else:
         assert thinking_level == ThinkingLevel.LOW
         reasoning_effort = "low"
 
-    response = client.responses.create(
+    response_stream = client.responses.create(
         model=OPENAI_MODEL,
         input=[{"role": "user", "content": prompt}],
         timeout=1800,
         reasoning={"effort": reasoning_effort},
+        stream=True,
     )
+
+    response = None
+    for chunk in response_stream:
+        if chunk.type == "response.completed":
+            response = chunk.response
+            break
+        elif chunk.type == "response.failed":
+            raise RuntimeError(f"OpenAI response failed: {chunk.response.error.message}")
+
+    if response is None:
+        raise RuntimeError("Response stream did not contain a completed response.")
 
     usage = response.usage
     assert usage
@@ -992,6 +1005,11 @@ Synthesize the insights from the parent solutions above to create an improved so
 - Make sure your code matches your natural language description
 """
 
+    # Setting this to None will use the novelty weight configured on the population
+    # (same as for non-crossover parent sampling)
+    # We set it to a higher value to encourage selecting more diverse parents for crossover.
+    SAMPLING_NOVELTY_WEIGHT: float | None = 1.0
+
     def __init__(
         self,
         train_in: list[list[list[int]]],
@@ -1029,6 +1047,7 @@ Synthesize the insights from the parent solutions above to create an improved so
             parents_with_results = self._context.population.sample_parents(
                 self._num_parents_per_crossover,
                 replace=False,
+                novelty_weight=self.SAMPLING_NOVELTY_WEIGHT,
             )
         except ValueError as e:
             print(f"Error sampling parents for crossover: {e}")
