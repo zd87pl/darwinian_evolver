@@ -83,7 +83,7 @@ class ThinkingLevel(enum.Enum):
     LOW = "low"
 
 
-# Cost tracking using shared memory for cross-process support.
+# Cost tracking state
 _COST_TRACKER = 0.0
 _COST_TRACKER_MUTEX = threading.Lock()
 
