@@ -1,11 +1,12 @@
 import enum
 import json
-import multiprocessing
 import os
 import random
 import re
 import resource
+import threading
 import traceback
+from concurrent.futures import ProcessPoolExecutor
 from math import floor
 
 import numpy as np
@@ -83,24 +84,24 @@ class ThinkingLevel(enum.Enum):
 
 
 # Cost tracking using shared memory for cross-process support.
-# We use multiprocessing.Value which comes with its own mutex for thread-safe operations.
-# With fork mode, this is automatically shared across processes.
-_COST_TRACKER = multiprocessing.Value("d", 0.0)
+_COST_TRACKER = 0.0
+_COST_TRACKER_MUTEX = threading.Lock()
 
-# Default memory limit for subprocesses (16GB in bytes)
-DEFAULT_SUBPROCESS_MEMORY_LIMIT_BYTES = 16 * 1024 * 1024 * 1024
+# Default memory limit for subprocesses (8GB in bytes)
+DEFAULT_SUBPROCESS_MEMORY_LIMIT_BYTES = 8 * 1024 * 1024 * 1024
 
 HIGHLIGHT_DIFF_THRESHOLD = 0.7
 
 
 def _track_cost(cost: float) -> None:
     global _COST_TRACKER
-    with _COST_TRACKER.get_lock():
-        _COST_TRACKER.value += cost
+    with _COST_TRACKER_MUTEX:
+        _COST_TRACKER += cost
 
 
 def get_current_cost() -> float:
-    return _COST_TRACKER.value
+    with _COST_TRACKER_MUTEX:
+        return _COST_TRACKER
 
 
 def set_process_limits(
@@ -332,6 +333,52 @@ class ArcAgiEvaluationFailureCase(EvaluationFailureCase):
     error: str | None
 
 
+def _run_one_inner(
+    code_block: str,
+    idx: int,
+    iin: list[list[int]],
+    oout: list[list[int]],
+    timeout_secs: int,
+) -> ArcAgiEvaluationFailureCase:
+    """Helper function to evaluate a code_block on a given input/output pair within its own process."""
+    set_process_limits()
+
+    success = False
+    soft = 0.0
+    err: str | None = None
+    try:
+        # Execute the organism's code first, populating the scope.
+        scope = {}
+        func_timeout(timeout_secs, exec, (code_block, scope))
+        transform_fn = scope["transform"]
+
+        arr = func_timeout(timeout_secs, lambda: transform_fn(np.array(iin)))
+
+        if not isinstance(arr, np.ndarray):
+            err = "The 'transform' function did not return a NumPy array. Returned type: " + str(type(arr))
+        if arr.ndim != 2:
+            err = f"The 'transform' function did not return a 2D array. Returned array has {arr.ndim} dimensions."
+    except FunctionTimedOut:
+        err = f"Code execution exceeded time limit of {timeout_secs} seconds."
+        arr = np.array([])
+    except Exception:
+        err = f"Code execution failed.\n{traceback.format_exc()}"
+        arr = np.array([])
+
+    if oout:
+        truth = np.array(oout)
+        success = bool(arr.shape == truth.shape and np.array_equal(arr, truth))
+        soft = soft_score(arr, truth)
+
+    return ArcAgiEvaluationFailureCase(
+        data_point_id=str(idx),
+        success=success,
+        output=json.dumps(arr.tolist()),
+        soft_score=soft,
+        error=err,
+    )
+
+
 class ArcAgiEvaluator(Evaluator[ArcAgiOrganism, ArcAgiEvaluationResult, ArcAgiEvaluationFailureCase]):
     TIMEOUT_SECS = 30  # 30 seconds
 
@@ -437,19 +484,18 @@ Do not include any other text outside the JSON object.
 
     def evaluate(self, organism: ArcAgiOrganism) -> ArcAgiEvaluationResult:
         """Executes and validates the organism's code."""
-        set_process_limits()
+        with ProcessPoolExecutor(max_workers=1) as executor:
+            train_results: list[ArcAgiEvaluationFailureCase] = []
+            for i, (iin, oout) in enumerate(zip(self._train_in, self._train_out, strict=True)):
+                train_results.append(self._run_one(organism.code_block, i, iin, oout, executor=executor))
 
-        train_results: list[ArcAgiEvaluationFailureCase] = []
-        for i, (iin, oout) in enumerate(zip(self._train_in, self._train_out, strict=True)):
-            train_results.append(self._run_one(organism.code_block, i, iin, oout))
+            all_train_solutions_correct = all(tr.success for tr in train_results)
 
-        all_train_solutions_correct = all(tr.success for tr in train_results)
-
-        # Evaluate on test_in as well and store the outputs into the evaluation result as holdout failure cases for later verification
-        test_results: list[ArcAgiEvaluationFailureCase] = []
-        for i, iin in enumerate(self._test_in):
-            gtout = self._gt_outputs[i] if self._gt_outputs is not None and i < len(self._gt_outputs) else []
-            test_results.append(self._run_one(organism.code_block, i, iin, gtout))
+            # Evaluate on test_in as well and store the outputs into the evaluation result as holdout failure cases for later verification
+            test_results: list[ArcAgiEvaluationFailureCase] = []
+            for i, iin in enumerate(self._test_in):
+                gtout = self._gt_outputs[i] if self._gt_outputs is not None and i < len(self._gt_outputs) else []
+                test_results.append(self._run_one(organism.code_block, i, iin, gtout, executor=executor))
 
         # Auxiliary scores for tie breaking
         simplicity_score, simplicity_subscores = self._score_code_simplicity(organism.code_block)
@@ -502,8 +548,6 @@ Do not include any other text outside the JSON object.
         """
         We check that the new organism produces a different prediction from its parent on at least one of its inputs.
         """
-        set_process_limits()
-
         if not organism.parent:
             return True
 
@@ -511,9 +555,10 @@ Do not include any other text outside the JSON object.
 
         parent_results: list[ArcAgiEvaluationFailureCase] = []
         child_results: list[ArcAgiEvaluationFailureCase] = []
-        for i, iin in enumerate(self._train_in + self._test_in):
-            parent_results.append(self._run_one(parent.code_block, i, iin, []))
-            child_results.append(self._run_one(organism.code_block, i, iin, []))
+        with ProcessPoolExecutor(max_workers=1) as executor:
+            for i, iin in enumerate(self._train_in + self._test_in):
+                parent_results.append(self._run_one(parent.code_block, i, iin, [], executor=executor))
+                child_results.append(self._run_one(organism.code_block, i, iin, [], executor=executor))
 
         for pr, cr in zip(parent_results, child_results, strict=True):
             if pr.output != cr.output:
@@ -610,42 +655,11 @@ Do not include any other text outside the JSON object.
             return 0.0, {}
 
     def _run_one(
-        self, code_block: str, idx: int, iin: list[list[int]], oout: list[list[int]]
+        self, code_block: str, idx: int, iin: list[list[int]], oout: list[list[int]], executor: ProcessPoolExecutor
     ) -> ArcAgiEvaluationFailureCase:
-        success = False
-        soft = 0.0
-        err: str | None = None
-        try:
-            # Execute the organism's code first, populating the scope.
-            scope = {}
-            func_timeout(self.TIMEOUT_SECS, exec, (code_block, scope))
-            transform_fn = scope["transform"]
-
-            arr = func_timeout(self.TIMEOUT_SECS, lambda: transform_fn(np.array(iin)))
-
-            if not isinstance(arr, np.ndarray):
-                err = "The 'transform' function did not return a NumPy array. Returned type: " + str(type(arr))
-            if arr.ndim != 2:
-                err = f"The 'transform' function did not return a 2D array. Returned array has {arr.ndim} dimensions."
-        except FunctionTimedOut:
-            err = f"Code execution exceeded time limit of {self.TIMEOUT_SECS} seconds."
-            arr = np.array([])
-        except Exception:
-            err = f"Code execution failed.\n{traceback.format_exc()}"
-            arr = np.array([])
-
-        if oout:
-            truth = np.array(oout)
-            success = bool(arr.shape == truth.shape and np.array_equal(arr, truth))
-            soft = soft_score(arr, truth)
-
-        return ArcAgiEvaluationFailureCase(
-            data_point_id=str(idx),
-            success=success,
-            output=json.dumps(arr.tolist()),
-            soft_score=soft,
-            error=err,
-        )
+        # Launch evaluation in a subprocess to enforce resource limits.
+        future = executor.submit(_run_one_inner, code_block, idx, iin, oout, self.TIMEOUT_SECS)
+        return future.result()
 
 
 class ArcAgiMutator(Mutator[ArcAgiOrganism, ArcAgiEvaluationFailureCase]):

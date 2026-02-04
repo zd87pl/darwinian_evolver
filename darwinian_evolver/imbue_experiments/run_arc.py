@@ -1,6 +1,7 @@
 import argparse
 import concurrent
 import json
+import multiprocessing
 import random
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -28,7 +29,6 @@ def _eval_task_data(
     gt_outputs: list | None = None,
     verbose: bool = False,
     max_time_seconds: int | None = None,
-    use_process_pool_executors: bool = False,
     include_crossover: bool = False,
     crossover_frequency: float = 0.25,
     crossover_min_population: int = 3,
@@ -54,11 +54,6 @@ def _eval_task_data(
         batch_size=32,
         should_verify_mutations=True,
         num_parents_per_iteration=4,
-        # Optional: Use subprocesses to be a little more resilient against OOM issues.
-        # When enabled, each subprocess has memory limits (default 16GB) and uses shared memory for cost tracking.
-        # Note: You might need to increase your open file limit (e.g. `ulimit -n 16000`) to avoid
-        #  `[Errno 24] Too many open files`.
-        use_process_pool_executors=use_process_pool_executors,
     )
 
     start_time = time.time()
@@ -143,6 +138,8 @@ def _select_alternative_attempts(
 
 
 if __name__ == "__main__":
+    multiprocessing.set_start_method("forkserver")
+
     arg_parser = argparse.ArgumentParser(
         description="Use the Darwinian Evolver to solve ARC-AGI tasks and produce Kaggle submission file."
     )
@@ -236,12 +233,6 @@ if __name__ == "__main__":
         default="none",
     )
     arg_parser.add_argument(
-        "--use_process_pool",
-        action="store_true",
-        help="Whether to use process pool executors for mutation verification. More resilient to OOM issues (each subprocess has an 8GB memory limit). Cost tracking works via shared memory.",
-        required=False,
-    )
-    arg_parser.add_argument(
         "--include_crossover",
         action="store_true",
         default=True,
@@ -322,7 +313,6 @@ if __name__ == "__main__":
                     gt_outputs=gt_outputs,
                     verbose=args.verbose,
                     max_time_seconds=args.max_time,
-                    use_process_pool_executors=args.use_process_pool,
                     include_crossover=args.include_crossover,
                     crossover_frequency=args.crossover_frequency,
                     crossover_min_population=args.crossover_min_population,
