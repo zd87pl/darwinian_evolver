@@ -192,14 +192,15 @@ def _prompt_llm_anthropic(prompt: str, thinking_level: ThinkingLevel) -> str:
     anthropic_thinking_effort = "low"
 
     try:
-        response = client.messages.create(
+        with client.messages.stream(
             model=ANTHROPIC_MODEL,
             max_tokens=128000,
             messages=[{"role": "user", "content": prompt}],
             timeout=3600,
             thinking={"type": "disabled" if thinking_level == ThinkingLevel.LOW else "adaptive"},
             output_config={"effort": anthropic_thinking_effort},
-        )
+        ) as stream:
+            response = stream.get_final_message()
     except Exception as e:
         print(f"Anthropic API call failed: {e}")
         raise
