@@ -445,7 +445,7 @@ The person has also applied the suggested transformation to the so called "chall
 Your task is to assess whether the transformation step works for the challenge inputs, and to check whether the person did correctly apply the steps to the challenge inputs.
 
 # PROBLEM
-For context, here is the problem to be solved:
+For context, here is the problem to be solved, including the challenge inputs:
 
 $$problem$$
 
@@ -650,6 +650,9 @@ Do not include any other text outside the JSON object.
         test_results: list[ArcAgiEvaluationFailureCase],
         retries_remaining: int = 1,
     ) -> tuple[float, dict[str, float]]:
+        if not explanation.strip():
+            return 0.0, {}
+
         example = make_example(self._train_in, self._train_out, self._test_in)
         should_highlight_diff = self._baseline_similarity >= HIGHLIGHT_DIFF_THRESHOLD
         problem_str = format_problem(example, should_highlight_diff=should_highlight_diff)
