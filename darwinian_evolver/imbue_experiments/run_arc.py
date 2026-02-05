@@ -22,6 +22,9 @@ from darwinian_evolver.problems.arc_agi_poetiq import score_task
 if USE_PROVIDER == "openai":
     # GPT 5.2 tends to assign lower transfer scores than Gemini 3.
     SUFFICIENT_TRANSFER_SCORE = 0.7
+elif USE_PROVIDER == "anthropic":
+    # Opus 4.6 is even more conservative with transfer scores...
+    SUFFICIENT_TRANSFER_SCORE = 0.4
 else:
     SUFFICIENT_TRANSFER_SCORE = 0.9
 
@@ -60,7 +63,7 @@ def _eval_task_data(
         novelty_weight=0.2,
         batch_size=32,
         should_verify_mutations=True,
-        num_parents_per_iteration=4,
+        num_parents_per_iteration=2,
     )
 
     start_time = time.time()

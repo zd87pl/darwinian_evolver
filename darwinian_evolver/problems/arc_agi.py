@@ -36,7 +36,7 @@ from darwinian_evolver.problems.arc_agi_poetiq import make_example
 from darwinian_evolver.problems.arc_agi_poetiq import parse_code_from_llm
 from darwinian_evolver.problems.arc_agi_poetiq import soft_score
 
-ANTHROPIC_MODEL = "claude-opus-4-5-20251101"
+ANTHROPIC_MODEL = "claude-opus-4-6"
 ANTHROPIC_THINKING_BUDGET = 16000
 ANTHROPIC_MODEL_COSTS = {
     "claude-sonnet-4-5-20250929": {
@@ -44,6 +44,10 @@ ANTHROPIC_MODEL_COSTS = {
         "output_per_1m_tokens": 15.0,
     },
     "claude-opus-4-5-20251101": {
+        "input_per_1m_tokens": 5.0,
+        "output_per_1m_tokens": 25.0,
+    },
+    "claude-opus-4-6": {
         "input_per_1m_tokens": 5.0,
         "output_per_1m_tokens": 25.0,
     },
@@ -174,15 +178,31 @@ def _track_anthropic_costs(model: str, usage: AnthropicUsage) -> None:
 @retry(stop=stop_after_attempt(4), wait=wait_random_exponential(multiplier=10), reraise=True)
 def _prompt_llm_anthropic(prompt: str, thinking_level: ThinkingLevel) -> str:
     client = Anthropic()
-    response = client.messages.create(
-        model=ANTHROPIC_MODEL,
-        max_tokens=64000,
-        messages=[{"role": "user", "content": prompt}],
-        timeout=1800,
-        thinking={"type": "enabled", "budget_tokens": ANTHROPIC_THINKING_BUDGET}
-        if thinking_level == ThinkingLevel.HIGH
-        else {"type": "disabled"},
-    )
+    # if thinking_level == ThinkingLevel.HIGH:
+    #     anthropic_thinking_effort = "high"
+    # elif thinking_level == ThinkingLevel.MEDIUM:
+    #     anthropic_thinking_effort = "medium"
+    # else:
+    #     anthropic_thinking_effort = "low"
+
+    # From the Opus 4.6 System Card:
+    # >> Because ARC-AGI is a reasoning-intensive benchmark, Opus 4.6 saturates the available
+    #  thinking tokens at all effort levels, leading to very similar scores. Nonetheless, at low effort,
+    #  the model is able to save on tokens by stopping early for easier problems. <<
+    anthropic_thinking_effort = "low"
+
+    try:
+        response = client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=128000,
+            messages=[{"role": "user", "content": prompt}],
+            timeout=3600,
+            thinking={"type": "disabled" if thinking_level == ThinkingLevel.LOW else "adaptive"},
+            output_config={"effort": anthropic_thinking_effort},
+        )
+    except Exception as e:
+        print(f"Anthropic API call failed: {e}")
+        raise
 
     _track_anthropic_costs(ANTHROPIC_MODEL, response.usage)
 
