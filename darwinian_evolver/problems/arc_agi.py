@@ -654,7 +654,8 @@ Do not include any other text outside the JSON object.
             return 0.0, {}
 
         example = make_example(self._train_in, self._train_out, self._test_in)
-        problem_str = format_problem(example, should_highlight_diff=False)
+        should_highlight_diff = self._baseline_similarity >= HIGHLIGHT_DIFF_THRESHOLD
+        problem_str = format_problem(example, should_highlight_diff=should_highlight_diff)
         feedback_str = build_feedback([], [], [], test_results)[0]
         prompt = build_prompt(
             self.TRANSFER_SCORE_PROMPT,
