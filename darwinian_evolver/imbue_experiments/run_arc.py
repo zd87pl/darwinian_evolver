@@ -24,7 +24,7 @@ if USE_PROVIDER == "openai":
     SUFFICIENT_TRANSFER_SCORE = 0.7
 elif USE_PROVIDER == "anthropic":
     # Opus 4.6 is even more conservative with transfer scores...
-    SUFFICIENT_TRANSFER_SCORE = 0.4
+    SUFFICIENT_TRANSFER_SCORE = 0.35
 else:
     SUFFICIENT_TRANSFER_SCORE = 0.9
 
@@ -35,6 +35,7 @@ def _eval_task_data(
     log_path: Path,
     max_iterations: int,
     extra_iterations_after_solution: int,
+    num_parents_per_iteration: int,
     learning_log_type: str = "none",
     gt_outputs: list | None = None,
     verbose: bool = False,
@@ -57,13 +58,13 @@ def _eval_task_data(
     evolve_loop = EvolveProblemLoop(
         problem,
         learning_log_view_type=parse_learning_log_view_type(learning_log_type),
-        # For ARC AGI tasks, we bias fairly heavily towards exploitation of the top-performing organisms.
-        sharpness=25.0,
-        midpoint_score_percentile=99.0,
+        sharpness=10.0,
+        # Use p50 for very strong models (e.g. Opus 4.6), a higher value such as p99 for Gemini 3 to hone in more strongly on well-performing organisms.
+        midpoint_score_percentile=50.0,
         novelty_weight=0.2,
         batch_size=32,
         should_verify_mutations=True,
-        num_parents_per_iteration=2,
+        num_parents_per_iteration=num_parents_per_iteration,
     )
 
     start_time = time.time()
@@ -208,14 +209,24 @@ if __name__ == "__main__":
         "--max_iterations",
         type=int,
         help="Maximum number of evolution iterations per problem.",
-        default=32,
+        # 8-16 is a reasonable choice for Opus 4.6. Gemini 3 can still benefit from up to ~32.
+        default=8,
         required=False,
     )
     arg_parser.add_argument(
         "--extra_iterations_after_solution",
         type=int,
         help="Extra iterations to run after finding a full solution to see if we can find a more general one.",
-        default=3,
+        # 0 for Opus 4.6, use ~3 for Gemini 3
+        default=0,
+        required=False,
+    )
+    arg_parser.add_argument(
+        "--num_parents_per_iteration",
+        type=int,
+        help="Number of parent organisms to select per iteration.",
+        # 2 for Opus 4.6. Can be increased for cheaper/weaker models (such as Gemini 3)
+        default=2,
         required=False,
     )
     arg_parser.add_argument(
@@ -328,6 +339,7 @@ if __name__ == "__main__":
                     include_crossover=args.include_crossover,
                     crossover_frequency=args.crossover_frequency,
                     crossover_min_population=args.crossover_min_population,
+                    num_parents_per_iteration=args.num_parents_per_iteration,
                 )
             )
 

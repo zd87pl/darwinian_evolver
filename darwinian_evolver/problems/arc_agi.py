@@ -765,10 +765,7 @@ Here's how to approach the problem:
   *   Use NumPy for array manipulations. Other standard libraries are also available.
   *   The code should implement the natural language steps you described.
   *   If it is too hard to distill the transformation step into general code, you can hard-code elements of the solutions as a last resort. Make sure to cover all example AND challenge inputs in that case. ONLY do this if you have exhausted all other options.
-6. Test and Refine:
-  *   Test your code on all examples. If it fails for any example, refine your hypothesis and code.
-  *   Also make sure the code will function correctly on the challenge inputs.
-7. Output Format:
+6. Output Format:
   *   Your response must have two parts: First, an explanation with transformation steps. Then, a code block.
   *   **Explanation**:
      - Describe the transformation step in natural language
