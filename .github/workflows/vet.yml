@@ -1,0 +1,61 @@
+name: Vet Code Review
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+jobs:
+  vet:
+    name: Vet Code Review
+    runs-on: ubuntu-latest
+    # Only run on non-draft PRs
+    if: "!github.event.pull_request.draft"
+    permissions:
+      pull-requests: write  # Needed to post comments
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history needed for git diff
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Vet
+        run: pip install git+https://github.com/imbue-ai/vet.git
+
+      - name: Run Vet
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VET_GOAL: |
+            PR Title: ${{ github.event.pull_request.title }}
+
+            PR Description:
+            ${{ github.event.pull_request.body }}
+        run: |
+          # Run Vet but don't fail CI if issues are found
+          vet --base-commit ${{ github.event.pull_request.base.sha }} || true
+
+      - name: Post Vet Results
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let vetOutput = '';
+            try {
+              vetOutput = fs.readFileSync('vet_output.txt', 'utf8');
+            } catch (e) {
+              vetOutput = 'Vet completed with no issues found.';
+            }
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🔍 Vet Code Review Results\n\n${vetOutput}`
+            });
