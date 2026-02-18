@@ -26,7 +26,7 @@ elif USE_PROVIDER == "anthropic":
     # Opus 4.6 is even more conservative with transfer scores...
     SUFFICIENT_TRANSFER_SCORE = 0.35
 else:
-    SUFFICIENT_TRANSFER_SCORE = 0.9
+    SUFFICIENT_TRANSFER_SCORE = 0.95
 
 
 def _eval_task_data(
@@ -217,7 +217,6 @@ if __name__ == "__main__":
         "--extra_iterations_after_solution",
         type=int,
         help="Extra iterations to run after finding a full solution to see if we can find a more general one.",
-        # 0-1 for Opus 4.6, use ~3 for Gemini 3
         default=1,
         required=False,
     )
