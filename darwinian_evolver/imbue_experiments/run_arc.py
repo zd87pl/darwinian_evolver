@@ -209,8 +209,7 @@ if __name__ == "__main__":
         "--max_iterations",
         type=int,
         help="Maximum number of evolution iterations per problem.",
-        # 8-16 is a reasonable choice for Opus 4.6. Gemini 3 can still benefit from up to ~32.
-        default=8,
+        default=16,
         required=False,
     )
     arg_parser.add_argument(
