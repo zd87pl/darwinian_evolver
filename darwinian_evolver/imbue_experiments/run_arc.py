@@ -26,13 +26,10 @@ elif USE_PROVIDER == "anthropic":
     # Opus 4.6 is even more conservative with transfer scores...
     SUFFICIENT_TRANSFER_SCORE = 0.35
 else:
+    # This value is calibrated primarily for Gemini 3 models
     SUFFICIENT_TRANSFER_SCORE = 0.95
 
-# Use p50 for very strong models (e.g. Opus 4.6 or Gemini 3.1 Pro).
-# A higher value such as p99 works better for Gemini 3 Flash to hone in more strongly on well-performing organisms.
 MIDPOINT_SCORE_PERCENTILE = 50.0
-if USE_PROVIDER == "google_alt":
-    MIDPOINT_SCORE_PERCENTILE = 99.0
 
 
 def _eval_task_data(
@@ -221,14 +218,14 @@ if __name__ == "__main__":
         "--extra_iterations_after_solution",
         type=int,
         help="Extra iterations to run after finding a full solution to see if we can find a more general one.",
-        default=0,
+        default=2,
         required=False,
     )
     arg_parser.add_argument(
         "--num_parents_per_iteration",
         type=int,
         help="Number of parent organisms to select per iteration.",
-        # 2 for Opus 4.6. Can be increased for cheaper/weaker models (such as Gemini 3)
+        # 2 is more efficient for strong models (Opus 4.6 etc). Can be increased to 3-4 for cheaper/weaker models (such as Gemini 3 Flash)
         default=2,
         required=False,
     )
