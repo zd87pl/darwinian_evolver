@@ -1,5 +1,5 @@
 [offload]
-max_parallel = 3
+max_parallel = 1
 test_timeout_secs = 120
 stream_output = true
 
