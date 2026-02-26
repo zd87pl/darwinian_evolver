@@ -29,7 +29,7 @@ else:
     # This value is calibrated primarily for Gemini 3 models
     SUFFICIENT_TRANSFER_SCORE = 0.95
 
-MIDPOINT_SCORE_PERCENTILE = 75.0
+MIDPOINT_SCORE_PERCENTILE = 99.0
 
 USE_EXTENSIVE_SEARCH = True
 
