@@ -10,8 +10,15 @@ from darwinian_evolver.cli_common import register_hyperparameter_args
 from darwinian_evolver.evolve_problem_loop import EvolveProblemLoop
 from darwinian_evolver.evolve_problem_loop import IterationSnapshot
 from darwinian_evolver.problems.registry import AVAILABLE_PROBLEMS
+from darwinian_evolver.problems.registry import CONFIGURABLE_PROBLEMS
+from darwinian_evolver.problems.registry import register_repo_task
 from darwinian_evolver.storage import upload_bytes_to_s3
 from darwinian_evolver.storage import upload_file_to_s3_fixed_path
+
+# Register configurable problems
+register_repo_task()
+
+ALL_PROBLEM_NAMES = list(AVAILABLE_PROBLEMS.keys()) + list(CONFIGURABLE_PROBLEMS.keys())
 
 
 def parse_args() -> argparse.Namespace:
@@ -20,8 +27,8 @@ def parse_args() -> argparse.Namespace:
     arg_parser.add_argument(
         "problem",
         type=str,
-        choices=AVAILABLE_PROBLEMS.keys(),
-        help="The problem to evolve. Available problems: " + ", ".join(AVAILABLE_PROBLEMS.keys()),
+        choices=ALL_PROBLEM_NAMES,
+        help="The problem to evolve. Available problems: " + ", ".join(ALL_PROBLEM_NAMES),
     )
 
     hyperparameter_args = arg_parser.add_argument_group("Hyperparameters")
@@ -90,6 +97,61 @@ def parse_args() -> argparse.Namespace:
         help="S3 path to upload results to, relative to the s3://int8-shared-internal/ bucket.",
     )
 
+    # repo_task-specific arguments
+    repo_task_args = arg_parser.add_argument_group("repo_task options (only used when problem=repo_task)")
+    repo_task_args.add_argument(
+        "--repo_root",
+        type=str,
+        required=False,
+        help="Path to the target git repository.",
+    )
+    repo_task_args.add_argument(
+        "--task",
+        type=str,
+        required=False,
+        help="Natural language description of the coding task.",
+    )
+    repo_task_args.add_argument(
+        "--test_command",
+        type=str,
+        required=False,
+        help='Command to run tests, e.g. "pytest --tb=short".',
+    )
+    repo_task_args.add_argument(
+        "--setup_command",
+        type=str,
+        required=False,
+        help="Optional setup command to run before tests (e.g. pip install -e .).",
+    )
+    repo_task_args.add_argument(
+        "--files",
+        type=str,
+        nargs="+",
+        required=False,
+        help="Explicit list of files to evolve. Auto-detected if omitted.",
+    )
+    repo_task_args.add_argument(
+        "--agent_model",
+        type=str,
+        default="claude-sonnet-4-20250514",
+        required=False,
+        help="Model for the agentic mutator. Default: claude-sonnet-4-20250514.",
+    )
+    repo_task_args.add_argument(
+        "--agent_max_turns",
+        type=int,
+        default=25,
+        required=False,
+        help="Max tool-use turns per mutation. Default: 25.",
+    )
+    repo_task_args.add_argument(
+        "--test_timeout",
+        type=int,
+        default=300,
+        required=False,
+        help="Timeout in seconds for the test command. Default: 300.",
+    )
+
     return arg_parser.parse_args()
 
 
@@ -125,7 +187,35 @@ if __name__ == "__main__":
     args = parse_args()
 
     # Select the specified problem
-    problem = AVAILABLE_PROBLEMS[args.problem]()
+    if args.problem in AVAILABLE_PROBLEMS:
+        problem = AVAILABLE_PROBLEMS[args.problem]()
+    elif args.problem in CONFIGURABLE_PROBLEMS:
+        if args.problem == "repo_task":
+            if not args.repo_root:
+                print("Error: --repo_root is required for repo_task problem")
+                sys.exit(1)
+            if not args.task:
+                print("Error: --task is required for repo_task problem")
+                sys.exit(1)
+            if not args.test_command:
+                print("Error: --test_command is required for repo_task problem")
+                sys.exit(1)
+            problem = CONFIGURABLE_PROBLEMS[args.problem](
+                repo_root=args.repo_root,
+                task=args.task,
+                test_command=args.test_command,
+                setup_command=args.setup_command,
+                files=args.files,
+                agent_model=args.agent_model,
+                agent_max_turns=args.agent_max_turns,
+                test_timeout=args.test_timeout,
+            )
+        else:
+            print(f"Error: No configuration handler for problem '{args.problem}'")
+            sys.exit(1)
+    else:
+        print(f"Error: Unknown problem '{args.problem}'")
+        sys.exit(1)
 
     if args.batch_size > 1 and not any(mutator.supports_batch_mutation for mutator in problem.mutators):
         print(

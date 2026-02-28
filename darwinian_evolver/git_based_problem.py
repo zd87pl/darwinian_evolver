@@ -12,6 +12,7 @@ from typing import Generator
 from typing import Iterable
 from typing import Self
 
+from pydantic import Field
 from pydantic import computed_field
 
 from darwinian_evolver.problem import Organism
@@ -27,6 +28,7 @@ class GitBasedOrganism(Organism):
     repo_root: str
     git_hash: str
     file_contents: dict[str, str]
+    deleted_files: set[str] = Field(default_factory=set)
 
     @classmethod
     def make_initial_organism_from_repo(
@@ -63,16 +65,22 @@ class GitBasedOrganism(Organism):
             return ""
 
         assert isinstance(self.parent, GitBasedOrganism), "Parent must be a GitBasedOrganism as well"
-        assert self.file_contents.keys() == self.parent.file_contents.keys(), (
-            "The set of captured files must match between parent and current organism"
-        )
 
         diffs_per_file = []
-        for file_path, content in self.file_contents.items():
-            if self.parent.file_contents[file_path] != content:
+
+        # Diff files present in both parent and child
+        all_files = set(self.file_contents.keys()) | set(self.parent.file_contents.keys())
+        for file_path in sorted(all_files):
+            parent_content = self.parent.file_contents.get(file_path, "")
+            child_content = self.file_contents.get(file_path, "")
+
+            if file_path in self.deleted_files:
+                child_content = ""
+
+            if parent_content != child_content:
                 file_diff = difflib.unified_diff(
-                    self.parent.file_contents[file_path].splitlines(keepends=True),
-                    content.splitlines(keepends=True),
+                    parent_content.splitlines(keepends=True),
+                    child_content.splitlines(keepends=True),
                     fromfile=file_path,
                     tofile=file_path,
                 )
@@ -96,13 +104,36 @@ class GitBasedOrganism(Organism):
 
             # Replace the relevant files with the contents from this organism
             for file_path, content in self.file_contents.items():
-                temp_file_path = f"{temp_dir}/{file_path}"
-                # Currently, we do not support adding new files. Though this could be added in the future.
-                assert os.path.exists(temp_file_path), f"File {temp_file_path} does not exist in the repository."
+                temp_file_path = os.path.join(temp_dir, file_path)
+                os.makedirs(os.path.dirname(temp_file_path), exist_ok=True)
                 with open(temp_file_path, "w") as f:
                     f.write(content)
 
+            # Remove deleted files
+            for file_path in self.deleted_files:
+                temp_file_path = os.path.join(temp_dir, file_path)
+                if os.path.exists(temp_file_path):
+                    os.remove(temp_file_path)
+
             yield temp_dir
+
+    @staticmethod
+    def capture_modified_files(temp_dir: str, base_file_contents: dict[str, str]) -> dict[str, str]:
+        """
+        Capture files that have been modified in the temp directory relative to the base file contents.
+
+        Returns a new file_contents dict with updated content for any changed files,
+        plus any new files created by the agent.
+        """
+        new_file_contents = {}
+        for file_path, original_content in base_file_contents.items():
+            full_path = os.path.join(temp_dir, file_path)
+            if os.path.exists(full_path):
+                with open(full_path) as f:
+                    new_file_contents[file_path] = f.read()
+            # If file was deleted, don't include it (handled via deleted_files)
+
+        return new_file_contents
 
     @staticmethod
     def _get_file_content(git_hash: str, file_path: str) -> str:
