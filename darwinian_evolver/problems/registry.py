@@ -10,3 +10,13 @@ AVAILABLE_PROBLEMS: dict[str, Callable[[], Problem]] = {
     "circle_packing": make_circle_packing_problem,
     "multiplication_verifier": make_multiplication_verifier_problem,
 }
+
+# Problems that require extra CLI args and are constructed via make_*_problem(**kwargs)
+CONFIGURABLE_PROBLEMS: dict[str, Callable[..., Problem]] = {}
+
+
+def register_repo_task() -> None:
+    """Register the repo_task problem (lazy import to avoid import cost when not used)."""
+    from darwinian_evolver.problems.repo_task_factory import make_repo_task_problem
+
+    CONFIGURABLE_PROBLEMS["repo_task"] = make_repo_task_problem
