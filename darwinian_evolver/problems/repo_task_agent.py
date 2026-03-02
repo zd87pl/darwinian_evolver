@@ -7,6 +7,7 @@ make edits, and run tests within a single mutation turn.
 
 from __future__ import annotations
 
+import ast
 import os
 import re
 import subprocess
@@ -18,6 +19,73 @@ from darwinian_evolver.learning_log import LearningLogEntry
 from darwinian_evolver.problem import Mutator
 from darwinian_evolver.problems.repo_task import RepoTaskFailureCase
 from darwinian_evolver.problems.repo_task import RepoTaskOrganism
+
+
+# --- Repo Structure Map ---
+
+
+def build_repo_structure_map(file_contents: dict[str, str]) -> str:
+    """
+    Build a concise structural map of the repository from file contents.
+
+    For Python files, parses the AST to extract function/class/method signatures.
+    For other files, just lists the file path.
+    """
+    lines = []
+    for path in sorted(file_contents.keys()):
+        content = file_contents[path]
+        if path.endswith(".py"):
+            signatures = _extract_python_signatures(content)
+            if signatures:
+                lines.append(f"{path}:")
+                for sig in signatures:
+                    lines.append(f"  {sig}")
+            else:
+                lines.append(f"{path}: (empty or unparseable)")
+        else:
+            line_count = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
+            lines.append(f"{path}: ({line_count} lines)")
+    return "\n".join(lines)
+
+
+def _extract_python_signatures(source: str) -> list[str]:
+    """Extract function and class signatures from Python source code."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+
+    signatures = []
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            args = _format_args(node.args)
+            prefix = "async def " if isinstance(node, ast.AsyncFunctionDef) else "def "
+            signatures.append(f"{prefix}{node.name}({args})")
+        elif isinstance(node, ast.ClassDef):
+            bases = ", ".join(ast.unparse(base) for base in node.bases)
+            class_sig = f"class {node.name}({bases})" if bases else f"class {node.name}"
+            signatures.append(class_sig)
+            # Extract methods
+            for item in node.body:
+                if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef):
+                    args = _format_args(item.args)
+                    prefix = "async def " if isinstance(item, ast.AsyncFunctionDef) else "def "
+                    signatures.append(f"  {prefix}{item.name}({args})")
+
+    return signatures
+
+
+def _format_args(args: ast.arguments) -> str:
+    """Format function arguments into a concise signature string."""
+    parts = []
+    # Regular args (skip 'self' and 'cls')
+    for arg in args.args:
+        if arg.arg not in ("self", "cls"):
+            parts.append(arg.arg)
+        else:
+            parts.append(arg.arg)
+    return ", ".join(parts)
+
 
 # --- Tool Definitions ---
 
@@ -264,9 +332,9 @@ class AgenticRepoMutator(Mutator[RepoTaskOrganism, RepoTaskFailureCase]):
         # Task description
         parts.append(f"## Task\n\n{organism.task_description}")
 
-        # File structure overview
-        file_list = "\n".join(f"- {path}" for path in sorted(organism.file_contents.keys()))
-        parts.append(f"## Files in scope\n\nThese files are being tracked:\n{file_list}")
+        # Repo structure map (AST-based signatures)
+        structure_map = build_repo_structure_map(organism.file_contents)
+        parts.append(f"## Repository structure\n\n```\n{structure_map}\n```")
 
         # Failure cases
         if failure_cases:
@@ -501,8 +569,6 @@ class AgenticRepoMutator(Mutator[RepoTaskOrganism, RepoTaskFailureCase]):
 
     def _check_syntax(self, filepath: str) -> str | None:
         """Check Python syntax. Returns error message or None if valid."""
-        if not filepath.endswith(".py"):
-            return None
         try:
             with open(filepath) as f:
                 source = f.read()

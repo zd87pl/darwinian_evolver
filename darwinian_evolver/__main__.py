@@ -12,11 +12,13 @@ from darwinian_evolver.evolve_problem_loop import IterationSnapshot
 from darwinian_evolver.problems.registry import AVAILABLE_PROBLEMS
 from darwinian_evolver.problems.registry import CONFIGURABLE_PROBLEMS
 from darwinian_evolver.problems.registry import register_repo_task
+from darwinian_evolver.problems.registry import register_spec_task
 from darwinian_evolver.storage import upload_bytes_to_s3
 from darwinian_evolver.storage import upload_file_to_s3_fixed_path
 
 # Register configurable problems
 register_repo_task()
+register_spec_task()
 
 ALL_PROBLEM_NAMES = list(AVAILABLE_PROBLEMS.keys()) + list(CONFIGURABLE_PROBLEMS.keys())
 
@@ -152,6 +154,34 @@ def parse_args() -> argparse.Namespace:
         help="Timeout in seconds for the test command. Default: 300.",
     )
 
+    # spec_task-specific arguments
+    spec_task_args = arg_parser.add_argument_group("spec_task options (only used when problem=spec_task)")
+    spec_task_args.add_argument(
+        "--spec",
+        type=str,
+        required=False,
+        help="The specification that the code should implement (natural language).",
+    )
+    spec_task_args.add_argument(
+        "--spec_file",
+        type=Path,
+        required=False,
+        help="Path to a file containing the specification (alternative to --spec).",
+    )
+    spec_task_args.add_argument(
+        "--validation_command",
+        type=str,
+        required=False,
+        help='Optional validation command (e.g. "python -c \'import mymodule\'", "ruff check .").',
+    )
+    spec_task_args.add_argument(
+        "--judge_model",
+        type=str,
+        default="claude-sonnet-4-20250514",
+        required=False,
+        help="Model for the LLM judge evaluator. Default: claude-sonnet-4-20250514.",
+    )
+
     return arg_parser.parse_args()
 
 
@@ -209,6 +239,26 @@ if __name__ == "__main__":
                 agent_model=args.agent_model,
                 agent_max_turns=args.agent_max_turns,
                 test_timeout=args.test_timeout,
+            )
+        elif args.problem == "spec_task":
+            if not args.repo_root:
+                print("Error: --repo_root is required for spec_task problem")
+                sys.exit(1)
+            spec = args.spec
+            if not spec and args.spec_file:
+                spec = args.spec_file.read_text()
+            if not spec:
+                print("Error: --spec or --spec_file is required for spec_task problem")
+                sys.exit(1)
+            problem = CONFIGURABLE_PROBLEMS[args.problem](
+                repo_root=args.repo_root,
+                spec=spec,
+                task=args.task or "",
+                validation_command=args.validation_command,
+                files=args.files,
+                agent_model=args.agent_model,
+                judge_model=args.judge_model,
+                agent_max_turns=args.agent_max_turns,
             )
         else:
             print(f"Error: No configuration handler for problem '{args.problem}'")

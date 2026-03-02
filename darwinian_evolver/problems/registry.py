@@ -20,3 +20,10 @@ def register_repo_task() -> None:
     from darwinian_evolver.problems.repo_task_factory import make_repo_task_problem
 
     CONFIGURABLE_PROBLEMS["repo_task"] = make_repo_task_problem
+
+
+def register_spec_task() -> None:
+    """Register the spec_task problem (lazy import to avoid import cost when not used)."""
+    from darwinian_evolver.problems.spec_task_factory import make_spec_task_problem
+
+    CONFIGURABLE_PROBLEMS["spec_task"] = make_spec_task_problem

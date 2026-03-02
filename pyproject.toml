@@ -32,6 +32,10 @@ dev = [
 test = [
     "pytest",
 ]
+dashboard = [
+    "streamlit>=1.40.0",
+    "plotly>=5.24.0",
+]
 
 [tool.ruff]
 line-length = 119

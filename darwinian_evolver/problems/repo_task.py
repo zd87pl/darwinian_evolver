@@ -36,10 +36,10 @@ class RepoTaskFailureCase(EvaluationFailureCase):
     test_name: str
     error_output: str = ""
 
-    @computed_field
-    @property
-    def data_point_id(self) -> str:
-        return self.test_name
+    def __init__(self, **data):
+        if "data_point_id" not in data:
+            data["data_point_id"] = data.get("test_name", "")
+        super().__init__(**data)
 
 
 class RepoTaskEvaluationResult(EvaluationResult):
