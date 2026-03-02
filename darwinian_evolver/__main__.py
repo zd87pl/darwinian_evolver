@@ -64,6 +64,13 @@ def parse_args() -> argparse.Namespace:
         default=False,
         help="Use multi-processing instead of multi-threading to run mutators and evaluators.",
     )
+    runtime_args.add_argument(
+        "--early_stop_score",
+        type=float,
+        default=None,
+        required=False,
+        help="Stop evolution early when best score reaches this threshold (e.g. 1.0 for all tests passing).",
+    )
 
     fixed_tree_mode_args = arg_parser.add_argument_group("Fixed Tree Mode")
     fixed_tree_mode_args.add_argument(
@@ -213,7 +220,62 @@ def print_snapshot_summary(snapshot: IterationSnapshot) -> None:
         print(f"    {s}: {v}")
 
 
+def _print_cost_summary(problem, final: bool = False) -> None:
+    """Print token usage from mutators and evaluators."""
+    total_input = 0
+    total_output = 0
+    total_calls = 0
+
+    for mutator in problem.mutators:
+        if hasattr(mutator, "total_input_tokens"):
+            total_input += mutator.total_input_tokens
+            total_output += mutator.total_output_tokens
+            total_calls += mutator.total_api_calls
+
+    evaluator = problem.evaluator
+    if hasattr(evaluator, "total_input_tokens"):
+        total_input += evaluator.total_input_tokens
+        total_output += evaluator.total_output_tokens
+        total_calls += evaluator.total_api_calls
+
+    if total_calls == 0:
+        return
+
+    total_tokens = total_input + total_output
+    # Approximate cost (Sonnet pricing: $3/MTok input, $15/MTok output)
+    approx_cost = (total_input * 3.0 + total_output * 15.0) / 1_000_000
+
+    if final:
+        print(f"\n  Total API calls: {total_calls}")
+        print(f"  Total tokens: {total_tokens:,} ({total_input:,} in / {total_output:,} out)")
+        print(f"  Estimated cost: ${approx_cost:.2f}")
+    else:
+        print(f"  Tokens so far: {total_tokens:,} (~${approx_cost:.2f})")
+
+
+def _handle_utility_command() -> bool:
+    """Handle utility subcommands (apply, status). Returns True if handled."""
+    if len(sys.argv) <= 1:
+        return False
+
+    cmd = sys.argv[1]
+    if cmd == "apply":
+        from darwinian_evolver.apply import main as apply_main
+
+        apply_main(sys.argv[2:])
+        return True
+    elif cmd == "status":
+        from darwinian_evolver.status import main as status_main
+
+        status_main(sys.argv[2:])
+        return True
+    return False
+
+
 if __name__ == "__main__":
+    if _handle_utility_command():
+        sys.exit(0)
+
     args = parse_args()
 
     # Select the specified problem
@@ -319,8 +381,12 @@ if __name__ == "__main__":
     else:
         print("Evaluating initial organism...")
 
+    early_stopped = False
     for snapshot in evolve_loop.run(num_iterations=args.num_iterations):
         print_snapshot_summary(snapshot)
+
+        # Print cost tracking info
+        _print_cost_summary(problem)
 
         if snapshot_dir:
             snapshot_file = snapshot_dir / f"iteration_{snapshot.iteration}.pkl"
@@ -346,6 +412,21 @@ if __name__ == "__main__":
                     "verification_failures": snapshot.population_json_log.get("organisms_failed_verification", []),
                 }
                 file.write(json.dumps(log_dict) + "\n")
+
+        # Early stopping check
+        if args.early_stop_score is not None:
+            best_score = snapshot.best_organism_result[1].score
+            if best_score >= args.early_stop_score:
+                print(f"\n  Early stopping: best score {best_score:.4f} >= threshold {args.early_stop_score}")
+                early_stopped = True
+                break
+
+    # Final cost summary
+    _print_cost_summary(problem, final=True)
+
+    if early_stopped and args.output_dir:
+        print(f"\n  Results saved to: {args.output_dir}")
+        print(f"  Apply best changes: python -m darwinian_evolver apply --output_dir {args.output_dir}")
 
     if args.s3_dir:
         upload_file_to_s3_fixed_path(json_log_file, str(args.s3_dir), "results.jsonl")

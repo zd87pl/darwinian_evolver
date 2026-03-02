@@ -101,6 +101,10 @@ class SpecTaskEvaluator(Evaluator[SpecTaskOrganism, SpecTaskEvaluationResult, Sp
         self._validation_command = validation_command
         self._validation_timeout = validation_timeout
         self._client = Anthropic()
+        # Cost tracking
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
+        self.total_api_calls = 0
 
     def evaluate(self, organism: SpecTaskOrganism) -> SpecTaskEvaluationResult:
         # Optional: run a validation command first (e.g., syntax check, type check)
@@ -132,6 +136,11 @@ Evaluate how well this code meets the specification."""
                 system=JUDGE_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}],
             )
+            # Track token usage
+            if hasattr(response, "usage") and response.usage:
+                self.total_input_tokens += response.usage.input_tokens
+                self.total_output_tokens += response.usage.output_tokens
+                self.total_api_calls += 1
             return self._parse_judge_response(response.content[0].text)
         except Exception as e:
             return SpecTaskEvaluationResult(

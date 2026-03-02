@@ -95,6 +95,9 @@ class AgenticSpecMutator(AgenticRepoMutator):
     ) -> list[SpecTaskOrganism]:
         from darwinian_evolver.git_based_problem import GitBasedOrganism
 
+        mutation_input_tokens = 0
+        mutation_output_tokens = 0
+
         with organism.build_repo() as temp_dir:
             user_prompt = self._build_prompt(organism, failure_cases, learning_log_entries)
             messages: list[dict] = [{"role": "user", "content": user_prompt}]
@@ -111,6 +114,11 @@ class AgenticSpecMutator(AgenticRepoMutator):
                 except Exception as e:
                     print(f"[SpecMutator] API error: {e}")
                     break
+
+                # Track token usage
+                if hasattr(response, "usage") and response.usage:
+                    mutation_input_tokens += response.usage.input_tokens
+                    mutation_output_tokens += response.usage.output_tokens
 
                 messages.append({"role": "assistant", "content": response.content})
 
@@ -139,6 +147,11 @@ class AgenticSpecMutator(AgenticRepoMutator):
             new_file_contents.update(new_files)
 
             summary = self._extract_summary(messages)
+
+        # Update cumulative cost tracking
+        self.total_input_tokens += mutation_input_tokens
+        self.total_output_tokens += mutation_output_tokens
+        self.total_api_calls += 1
 
         if new_file_contents == organism.file_contents and not new_files:
             return []

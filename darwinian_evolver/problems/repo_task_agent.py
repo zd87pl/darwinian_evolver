@@ -245,6 +245,10 @@ class AgenticRepoMutator(Mutator[RepoTaskOrganism, RepoTaskFailureCase]):
         self._model = model
         self._max_turns = max_turns
         self._client = Anthropic()
+        # Cost tracking
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
+        self.total_api_calls = 0
 
     @property
     def supports_batch_mutation(self) -> bool:
@@ -256,6 +260,9 @@ class AgenticRepoMutator(Mutator[RepoTaskOrganism, RepoTaskFailureCase]):
         failure_cases: list[RepoTaskFailureCase],
         learning_log_entries: list[LearningLogEntry],
     ) -> list[RepoTaskOrganism]:
+        mutation_input_tokens = 0
+        mutation_output_tokens = 0
+
         with organism.build_repo() as temp_dir:
             user_prompt = self._build_prompt(organism, failure_cases, learning_log_entries)
             messages: list[dict] = [{"role": "user", "content": user_prompt}]
@@ -272,6 +279,11 @@ class AgenticRepoMutator(Mutator[RepoTaskOrganism, RepoTaskFailureCase]):
                 except Exception as e:
                     print(f"[AgenticMutator] API error: {e}")
                     break
+
+                # Track token usage
+                if hasattr(response, "usage") and response.usage:
+                    mutation_input_tokens += response.usage.input_tokens
+                    mutation_output_tokens += response.usage.output_tokens
 
                 # Append the assistant's response
                 messages.append({"role": "assistant", "content": response.content})
@@ -306,6 +318,11 @@ class AgenticRepoMutator(Mutator[RepoTaskOrganism, RepoTaskFailureCase]):
             new_file_contents.update(new_files)
 
             summary = self._extract_summary(messages)
+
+        # Update cumulative cost tracking
+        self.total_input_tokens += mutation_input_tokens
+        self.total_output_tokens += mutation_output_tokens
+        self.total_api_calls += 1
 
         # If nothing changed, return empty
         if new_file_contents == organism.file_contents and not new_files:
